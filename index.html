@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSocket Chat</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .chat-container {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+            width: 100%;
+            max-width: 600px;
+            height: 700px;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .chat-header {
+            background: #667eea;
+            color: white;
+            padding: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .chat-header h2 {
+            font-size: 18px;
+            font-weight: 600;
+        }
+
+        .connection-status {
+            font-size: 12px;
+            padding: 4px 10px;
+            border-radius: 12px;
+            background: rgba(255, 255, 255, 0.2);
+        }
+
+        .connection-status.connected {
+            background: #10b981;
+        }
+
+        .connection-status.disconnected {
+            background: #ef4444;
+        }
+
+        .messages-container {
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+            background: #f9fafb;
+        }
+
+        .message {
+            margin-bottom: 16px;
+            display: flex;
+            animation: slideIn 0.3s ease;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .message.sent {
+            justify-content: flex-end;
+        }
+
+        .message.received {
+            justify-content: flex-start;
+        }
+
+        .message-bubble {
+            max-width: 70%;
+            padding: 12px 16px;
+            border-radius: 16px;
+            word-wrap: break-word;
+        }
+
+        .message.sent .message-bubble {
+            background: #667eea;
+            color: white;
+            border-bottom-right-radius: 4px;
+            position: relative;
+            padding-right: 30px;
+        }
+
+        .receipt-status {
+            position: absolute;
+            bottom: 4px;
+            right: 8px;
+            font-size: 12px;
+            opacity: 0.8;
+        }
+
+        .receipt-status.pending {
+            color: rgba(255, 255, 255, 0.5);
+        }
+
+        .receipt-status.delivered {
+            color: #10b981;
+            font-weight: bold;
+        }
+
+        .message.received .message-bubble {
+            background: white;
+            color: #1f2937;
+            border-bottom-left-radius: 4px;
+            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+        }
+
+        .input-container {
+            padding: 20px;
+            background: white;
+            border-top: 1px solid #e5e7eb;
+            display: flex;
+            gap: 10px;
+        }
+
+        #messageInput {
+            flex: 1;
+            padding: 12px 16px;
+            border: 2px solid #e5e7eb;
+            border-radius: 24px;
+            font-size: 14px;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        #messageInput:focus {
+            border-color: #667eea;
+        }
+
+        #sendBtn {
+            padding: 12px 24px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 24px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        #sendBtn:hover {
+            background: #5568d3;
+        }
+
+        #sendBtn:active {
+            transform: scale(0.95);
+        }
+
+        .system-message {
+            text-align: center;
+            color: #6b7280;
+            font-size: 12px;
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="chat-container">
+        <div class="chat-header">
+            <h2 id="chatTitle">Chat with User 10</h2>
+            <span class="connection-status disconnected" id="status">Connecting...</span>
+        </div>
+        
+        <div class="messages-container" id="messages"></div>
+        
+        <div class="input-container">
+            <input 
+                type="text" 
+                id="messageInput" 
+                placeholder="Type a message..." 
+                autocomplete="off"
+            >
+            <button id="sendBtn">Send</button>
+        </div>
+    </div>
+
+    <script>
+        const messagesContainer = document.getElementById('messages');
+        const messageInput = document.getElementById('messageInput');
+        const sendBtn = document.getElementById('sendBtn');
+        const statusEl = document.getElementById('status');
+        const chatTitle = document.getElementById('chatTitle');
+
+        // Get user_id from URL query parameters
+        const urlParams = new URLSearchParams(window.location.search);
+        const userId = urlParams.get('user_id') || '1';
+        const targetUserId = urlParams.get('target_user_id') || '10';
+        let ws = null;
+        let reconnectInterval = null;
+        let messageId = 0;
+
+        // Update chat title
+        chatTitle.textContent = `Chat with User ${targetUserId}`;
+
+        function connect() {
+            ws = new WebSocket(`ws://localhost:8822/ws?uid=${userId}`);
+
+            ws.onopen = () => {
+                console.log('WebSocket connected');
+                statusEl.textContent = 'Connected';
+                statusEl.className = 'connection-status connected';
+                addSystemMessage('Connected to chat');
+                
+                if (reconnectInterval) {
+                    clearInterval(reconnectInterval);
+                    reconnectInterval = null;
+                }
+            };
+
+            ws.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    
+                    // Check if it's a receipt confirmation
+                    if (data.type === 'receipt' && data.message_id) {
+                        updateMessageReceipt(data.message_id);
+                    } else {
+                        // Regular message
+                        addMessage(data.message, data.from_user_id === userId ? 'sent' : 'received');
+                        
+                        // Send receipt back for received messages
+                        if (data.from_user_id !== userId && data.message_id) {
+                            sendReceipt(data.message_id);
+                        }
+                    }
+                } catch (e) {
+                    console.error('Error parsing message:', e);
+                }
+            };
+
+            ws.onerror = (error) => {
+                console.error('WebSocket error:', error);
+            };
+
+            ws.onclose = () => {
+                console.log('WebSocket disconnected');
+                statusEl.textContent = 'Disconnected';
+                statusEl.className = 'connection-status disconnected';
+                addSystemMessage('Disconnected. Reconnecting...');
+                
+                if (!reconnectInterval) {
+                    reconnectInterval = setInterval(() => {
+                        console.log('Attempting to reconnect...');
+                        connect();
+                    }, 3000);
+                }
+            };
+        }
+
+        function sendMessage() {
+            const message = messageInput.value.trim();
+            
+            if (message && ws && ws.readyState === WebSocket.OPEN) {
+                messageId++;
+                const msgId = `msg_${userId}_${messageId}_${Date.now()}`;
+                
+                const payload = {
+                    message: message,
+                    from_user_id: userId,
+                    to_user_id: targetUserId,
+                    message_id: msgId
+                };
+                
+                ws.send(JSON.stringify(payload));
+                addMessage(message, 'sent', msgId);
+                messageInput.value = '';
+            }
+        }
+
+        function sendReceipt(msgId) {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                const receipt = {
+                    type: 'receipt',
+                    message_id: msgId,
+                    from_user_id: userId,
+                    to_user_id: targetUserId
+                };
+                ws.send(JSON.stringify(receipt));
+            }
+        }
+
+        function updateMessageReceipt(msgId) {
+            const messageEl = document.querySelector(`[data-message-id="${msgId}"]`);
+            if (messageEl) {
+                const receiptEl = messageEl.querySelector('.receipt-status');
+                if (receiptEl) {
+                    receiptEl.innerHTML = '✓✓';
+                    receiptEl.className = 'receipt-status delivered';
+                }
+            }
+        }
+
+        function addMessage(text, type, msgId = null) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${type}`;
+            if (msgId) {
+                messageDiv.setAttribute('data-message-id', msgId);
+            }
+            
+            const bubble = document.createElement('div');
+            bubble.className = 'message-bubble';
+            bubble.textContent = text;
+            
+            // Add receipt status for sent messages
+            if (type === 'sent') {
+                const receipt = document.createElement('span');
+                receipt.className = 'receipt-status pending';
+                receipt.innerHTML = '✓';
+                bubble.appendChild(receipt);
+            }
+            
+            messageDiv.appendChild(bubble);
+            messagesContainer.appendChild(messageDiv);
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        }
+
+        function addSystemMessage(text) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'system-message';
+            messageDiv.textContent = text;
+            messagesContainer.appendChild(messageDiv);
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        }
+
+        sendBtn.addEventListener('click', sendMessage);
+        
+        messageInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                sendMessage();
+            }
+        });
+
+        connect();
+    </script>
+</body>
+</html>
