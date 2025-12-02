@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -42,9 +43,35 @@
             align-items: center;
         }
 
-        .chat-header h2 {
-            font-size: 18px;
+        .chat-header-left {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .avatar {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            font-size: 16px;
+            color: white;
+            flex-shrink: 0;
+        }
+
+        .chat-info h2 {
+            font-size: 16px;
             font-weight: 600;
+            margin-bottom: 2px;
+        }
+
+        .chat-info .user-status {
+            font-size: 12px;
+            opacity: 0.9;
         }
 
         .connection-status {
@@ -72,7 +99,28 @@
         .message {
             margin-bottom: 16px;
             display: flex;
+            align-items: flex-end;
+            gap: 8px;
             animation: slideIn 0.3s ease;
+        }
+
+        .message-avatar {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #a8edea 0%, #fed6e3 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            font-size: 12px;
+            color: #666;
+            flex-shrink: 0;
+        }
+
+        .message.sent .message-avatar {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
         }
 
         @keyframes slideIn {
@@ -80,6 +128,7 @@
                 opacity: 0;
                 transform: translateY(10px);
             }
+
             to {
                 opacity: 1;
                 transform: translateY(0);
@@ -182,22 +231,24 @@
         }
     </style>
 </head>
+
 <body>
     <div class="chat-container">
         <div class="chat-header">
-            <h2 id="chatTitle">Chat with User 10</h2>
+            <div class="chat-header-left">
+                <div class="avatar" id="targetAvatar">U</div>
+                <div class="chat-info">
+                    <h2 id="chatTitle">User 10</h2>
+                    <div class="user-status">Online</div>
+                </div>
+            </div>
             <span class="connection-status disconnected" id="status">Connecting...</span>
         </div>
-        
+
         <div class="messages-container" id="messages"></div>
-        
+
         <div class="input-container">
-            <input 
-                type="text" 
-                id="messageInput" 
-                placeholder="Type a message..." 
-                autocomplete="off"
-            >
+            <input type="text" id="messageInput" placeholder="Type a message..." autocomplete="off">
             <button id="sendBtn">Send</button>
         </div>
     </div>
@@ -208,6 +259,7 @@
         const sendBtn = document.getElementById('sendBtn');
         const statusEl = document.getElementById('status');
         const chatTitle = document.getElementById('chatTitle');
+        const targetAvatar = document.getElementById('targetAvatar');
 
         // Get user_id from URL query parameters
         const urlParams = new URLSearchParams(window.location.search);
@@ -217,18 +269,25 @@
         let reconnectInterval = null;
         let messageId = 0;
 
-        // Update chat title
-        chatTitle.textContent = `Chat with User ${targetUserId}`;
+        // Update chat header with target user info
+        chatTitle.textContent = `User ${targetUserId}`;
+        targetAvatar.textContent = `U${targetUserId}`;
+
+        // Helper function to get user initials
+        function getUserInitials(uid) {
+            return `U${uid}`;
+        }
 
         function connect() {
-            ws = new WebSocket(`ws://localhost:8822/ws?uid=${userId}`);
+            // ws = new WebSocket(`ws://localhost:8822/ws?uid=${userId}`);
+            ws = new WebSocket(`wss://chat-service.fly.dev/ws?uid=${userId}`);
 
             ws.onopen = () => {
                 console.log('WebSocket connected');
                 statusEl.textContent = 'Connected';
                 statusEl.className = 'connection-status connected';
                 addSystemMessage('Connected to chat');
-                
+
                 if (reconnectInterval) {
                     clearInterval(reconnectInterval);
                     reconnectInterval = null;
@@ -238,14 +297,14 @@
             ws.onmessage = (event) => {
                 try {
                     const data = JSON.parse(event.data);
-                    
+
                     // Check if it's a receipt confirmation
                     if (data.type === 'receipt' && data.message_id) {
                         updateMessageReceipt(data.message_id);
                     } else {
                         // Regular message
                         addMessage(data.message, data.from_user_id === userId ? 'sent' : 'received');
-                        
+
                         // Send receipt back for received messages
                         if (data.from_user_id !== userId && data.message_id) {
                             sendReceipt(data.message_id);
@@ -265,7 +324,7 @@
                 statusEl.textContent = 'Disconnected';
                 statusEl.className = 'connection-status disconnected';
                 addSystemMessage('Disconnected. Reconnecting...');
-                
+
                 if (!reconnectInterval) {
                     reconnectInterval = setInterval(() => {
                         console.log('Attempting to reconnect...');
@@ -277,18 +336,18 @@
 
         function sendMessage() {
             const message = messageInput.value.trim();
-            
+
             if (message && ws && ws.readyState === WebSocket.OPEN) {
                 messageId++;
                 const msgId = `msg_${userId}_${messageId}_${Date.now()}`;
-                
+
                 const payload = {
                     message: message,
                     from_user_id: userId,
                     to_user_id: targetUserId,
                     message_id: msgId
                 };
-                
+
                 ws.send(JSON.stringify(payload));
                 addMessage(message, 'sent', msgId);
                 messageInput.value = '';
@@ -324,20 +383,30 @@
             if (msgId) {
                 messageDiv.setAttribute('data-message-id', msgId);
             }
-            
+
+            // Add avatar
+            const avatar = document.createElement('div');
+            avatar.className = 'message-avatar';
+            avatar.textContent = type === 'sent' ? getUserInitials(userId) : getUserInitials(targetUserId);
+
             const bubble = document.createElement('div');
             bubble.className = 'message-bubble';
             bubble.textContent = text;
-            
+
             // Add receipt status for sent messages
             if (type === 'sent') {
                 const receipt = document.createElement('span');
                 receipt.className = 'receipt-status pending';
                 receipt.innerHTML = '✓';
                 bubble.appendChild(receipt);
+
+                messageDiv.appendChild(bubble);
+                messageDiv.appendChild(avatar);
+            } else {
+                messageDiv.appendChild(avatar);
+                messageDiv.appendChild(bubble);
             }
-            
-            messageDiv.appendChild(bubble);
+
             messagesContainer.appendChild(messageDiv);
             messagesContainer.scrollTop = messagesContainer.scrollHeight;
         }
@@ -351,7 +420,7 @@
         }
 
         sendBtn.addEventListener('click', sendMessage);
-        
+
         messageInput.addEventListener('keypress', (e) => {
             if (e.key === 'Enter') {
                 sendMessage();
@@ -361,4 +430,5 @@
         connect();
     </script>
 </body>
+
 </html>
